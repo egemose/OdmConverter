@@ -1,3 +1,5 @@
+import errno
+import os
 import re
 from collections import namedtuple
 import cv2
@@ -65,7 +67,6 @@ class ImagePointToLatLon:
                     origin = np.array([float(match.group(6)),
                                        float(match.group(7)),
                                        float(match.group(8))])
-
         reconstruction = self.reconstruction_namedtuple(k, q, origin)
         return reconstruction
 
@@ -82,11 +83,28 @@ class ImagePointToLatLon:
     def get_depth(self, image_name, image, x, y):
         depth_map_file = self.project + '/opensfm/depthmaps/' + image_name \
                          + '.clean.npz'
-        depth_map = np.load(depth_map_file)['depth']
-        scale = depth_map.shape[1]/image.shape[1]
+        try:
+            depth_map = np.load(depth_map_file)['depth']
+        except FileNotFoundError:
+            print('Image is not part of the reconstruction')
+            raise
+        cv2.imwrite('test.png', depth_map)
+        scale = depth_map.shape[1] / image.shape[1]
         x_new = round(scale * x)
         y_new = round(scale * y)
         depth = depth_map[y_new, x_new]
+        if depth == 0:
+            depth = self.find_nearest_nonzero(depth_map, x_new, y_new)
+            print('Warning: pixel (%i, %i) not part of depth model. '
+                  'Nearest pixel in depth model is used, which may give some '
+                  'offset in the position.' % (x, y))
+        return depth
+
+    @staticmethod
+    def find_nearest_nonzero(depth_map, x, y):
+        row, col = np.nonzero(depth_map)
+        min_idx = ((row - y) ** 2 + (col - x) ** 2).argmin()
+        depth = depth_map[row[min_idx], col[min_idx]]
         return depth
 
     @staticmethod
@@ -115,6 +133,10 @@ class ImagePointToLatLon:
     def get_lat_lon(self, image_name, x, y):
         image_file = self.project + '/images/' + image_name
         image = cv2.imread(image_file)
+        if image is None:
+            print('Image not part of the project')
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+                                    image_file)
         depth = self.get_depth(image_name, image, x, y)
         recon = self.get_reconstruction(image_name, image)
         if recon.k is not None:
