@@ -8,6 +8,10 @@ from pyquaternion import Quaternion
 from utm.utm import utmconv
 
 
+class ReconstructionError(Exception):
+    pass
+
+
 class ImagePointToLatLon:
     def __init__(self, project):
         self.project = project
@@ -67,6 +71,9 @@ class ImagePointToLatLon:
                     origin = np.array([float(match.group(6)),
                                        float(match.group(7)),
                                        float(match.group(8))])
+        if k is None:
+            raise ReconstructionError('Image \'%s\' is not part of the '
+                                      'reconstruction.nvm file.' % image_name)
         reconstruction = self.reconstruction_namedtuple(k, q, origin)
         return reconstruction
 
@@ -135,16 +142,14 @@ class ImagePointToLatLon:
         image = cv2.imread(image_file)
         if image is None:
             print('Image not part of the project')
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT),
+            raise FileNotFoundError(errno.ENOENT,
+                                    os.strerror(errno.ENOENT),
                                     image_file)
         depth = self.get_depth(image_name, image, x, y)
         recon = self.get_reconstruction(image_name, image)
-        if recon.k is not None:
-            point3d = self.get_3d_point(x, y, depth, recon)
-            utm_point = self.get_geo_3d_point(point3d)
-            pos = self.utm_to_lat_lon(utm_point)
-        else:
-            pos = False
+        point3d = self.get_3d_point(x, y, depth, recon)
+        utm_point = self.get_geo_3d_point(point3d)
+        pos = self.utm_to_lat_lon(utm_point)
         return pos
 
 
