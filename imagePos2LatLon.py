@@ -1,35 +1,31 @@
+import re
+from collections import namedtuple
 import cv2
 import numpy as np
 from pyquaternion import Quaternion
-import re
 from utm.utm import utmconv
-from collections import namedtuple
 
 
 class ImagePointToLatLon:
     def __init__(self, project):
         self.project = project
-        self.reconstruction_file = project + '/opensfm/reconstruction.nvm'
-        self.geo_model_file = project + \
-            '/odm_georeferencing/odm_georeferencing_model_geo.txt'
-        self.geo_transform_file = project + \
-            '/odm_georeferencing/odm_georeferencing_transform.txt'
-
+        self.regex_f = '(-?\d+\.\d+)'
         self.geo_model_namedtuple = namedtuple('geo_model', ['hemisphere',
                                                              'zone',
                                                              'east_offset',
                                                              'north_offset'])
         self.reconstruction_namedtuple = namedtuple('reconstruction',
                                                     ['k', 'q', 'origin'])
-        self.gps_namedtuple = namedtuple('gps', ['lat', 'lon', 'alt'])
+        self.gps_namedtuple = namedtuple('gps', ['lat', 'lon'])
         self.geo_model = self.get_geo_model()
         self.geo_transform = self.get_geo_transform()
 
     def get_geo_transform(self):
+        geo_file = self.project \
+                   + '/odm_georeferencing/odm_georeferencing_transform.txt'
         geo_transform = np.zeros((4, 4))
-        row_matcher = re.compile(' (-?\d+\.\d+),\t(-?\d+\.\d+),\t(-?\d+\.\d+),'
-                                 '\t(-?\d+\.\d+) ')
-        with open(self.geo_transform_file, 'r') as f:
+        row_matcher = re.compile((self.regex_f + ',\t') * 3 + self.regex_f)
+        with open(geo_file, 'r') as f:
             for i, line in enumerate(f):
                 match = re.search(row_matcher, line)
                 for j, num in enumerate(match.groups()):
@@ -37,7 +33,9 @@ class ImagePointToLatLon:
         return geo_transform
 
     def get_geo_model(self):
-        with open(self.geo_model_file, 'r') as f:
+        geo_file = self.project \
+                   + '/odm_georeferencing/odm_georeferencing_model_geo.txt'
+        with open(geo_file, 'r') as f:
             model = f.readline()
             offset = f.readline()
         hemisphere = model[-2]
@@ -55,17 +53,15 @@ class ImagePointToLatLon:
         k = None
         q = None
         origin = None
-        row_matcher = re.compile('.*/' + image_name + ' (-?\d+\.\d+)'
-                                 ' (-?\d+\.\d+) (-?\d+\.\d+) (-?\d+\.\d+)'
-                                 ' (-?\d+\.\d+) (-?\d+\.\d+) (-?\d+\.\d+)'
-                                 ' (-?\d+\.\d+) 0 0')
-        with open(self.reconstruction_file, 'r') as f:
+        reconstruction_file = self.project + '/opensfm/reconstruction.nvm'
+        row_matcher = re.compile(image_name + (' ' + self.regex_f) * 8)
+        with open(reconstruction_file, 'r') as f:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
-                    k = self.get_k(match.group(1), image)
-                    q = Quaternion(match.group(2), match.group(3),
-                                   match.group(4), match.group(5))
+                    k = self.get_k(float(match.group(1)), image)
+                    q = Quaternion(float(match.group(2)), float(match.group(3)),
+                                   float(match.group(4)), float(match.group(5)))
                     origin = np.array([float(match.group(6)),
                                        float(match.group(7)),
                                        float(match.group(8))])
@@ -76,11 +72,11 @@ class ImagePointToLatLon:
     @staticmethod
     def get_k(focal, image):
         k = np.zeros((3, 3))
-        k[0, 0] = float(focal)
-        k[1, 1] = float(focal)
+        k[0, 0] = focal
+        k[1, 1] = focal
         k[2, 2] = 1
-        k[0, 2] = image.shape[1]/2
-        k[1, 2] = image.shape[0]/2
+        k[0, 2] = image.shape[1] / 2
+        k[1, 2] = image.shape[0] / 2
         return k
 
     def get_depth(self, image_name, image, x, y):
@@ -113,7 +109,7 @@ class ImagePointToLatLon:
         north = p[1] + n_offset
         utm_converter = utmconv()
         lat, lon = utm_converter.utm_to_geodetic(hemisphere, zone, east, north)
-        pos = self.gps_namedtuple(lat, lon, p[2])
+        pos = self.gps_namedtuple(lat, lon)
         return pos
 
     def get_lat_lon(self, image_name, x, y):
@@ -130,7 +126,8 @@ class ImagePointToLatLon:
         return pos
 
 
-image_pos = ImagePointToLatLon('/home/henrik/droneMap/projects/hojby')
-gps_pos = image_pos.get_lat_lon('DJI_0195.JPG', 1677, 1740)
-print(gps_pos.lat)
-print(gps_pos.lon)
+if __name__ == '__main__':
+    image_pos = ImagePointToLatLon('/home/henrik/droneMap/projects/hojby')
+    gps_pos = image_pos.get_lat_lon('DJI_0361.JPG', 5000, 1)
+    print(gps_pos.lat)
+    print(gps_pos.lon)
