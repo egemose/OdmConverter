@@ -1,21 +1,25 @@
 import errno
+import glob
+import json
 import os
 import re
 from collections import namedtuple
 import cv2
-import glob
-import json
+import magic
 import numpy as np
 from pyquaternion import Quaternion
 from utm.utm import utmconv
-from imagePos2LatLon import ImagePointToLatLon
 
 
 class ReconstructionError(Exception):
     pass
 
 
-class NoImageError(Exception):
+class NoCameraModelError(Exception):
+    pass
+
+
+class ImageSizeError(Exception):
     pass
 
 
@@ -35,6 +39,7 @@ class LatLonToImagePoint:
         self.model_3d = self.get_3d_model()
         self.image_list = self.list_of_images()
         self.image = None
+        self.image_shape = None
         self.image_name = None
         self.depth_map = None
         self.recon = None
@@ -87,6 +92,19 @@ class LatLonToImagePoint:
                                               north_offset)
         return geo_model
 
+    def get_model_image_shape(self):
+        shape = None
+        file = self.project + '/opensfm/camera_models.json'
+        with open(file, 'r') as f:
+            camera_model = json.load(f)
+            for cam in camera_model:
+                cam_data = camera_model.get(cam)
+                shape = (cam_data.get('height'), cam_data.get('width'))
+        if shape is None:
+            raise NoCameraModelError('No camera_models.json file found for '
+                                     'the project.')
+        return shape
+
     def get_reconstruction(self):
         k = None
         q = None
@@ -97,7 +115,10 @@ class LatLonToImagePoint:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
-                    k = self.get_k(float(match.group(1)), self.image)
+                    model_image_shape = self.get_model_image_shape()
+                    k = self.get_k(float(match.group(1)),
+                                   self.image_shape,
+                                   model_image_shape)
                     q = Quaternion(float(match.group(2)), float(match.group(3)),
                                    float(match.group(4)), float(match.group(5)))
                     origin = np.array([float(match.group(6)),
@@ -110,20 +131,20 @@ class LatLonToImagePoint:
         return True
 
     @staticmethod
-    def get_k(focal, image):
+    def get_k(focal, image_shape, model_image_shape):
         k = np.zeros((3, 3))
-        k[0, 0] = focal
-        k[1, 1] = focal
+        k[0, 0] = focal * image_shape[1] / model_image_shape[1]
+        k[1, 1] = focal * image_shape[0] / model_image_shape[0]
         k[2, 2] = 1
-        k[0, 2] = image.shape[1] / 2
-        k[1, 2] = image.shape[0] / 2
+        k[0, 2] = image_shape[1] / 2
+        k[1, 2] = image_shape[0] / 2
         return k
 
     @staticmethod
     def get_image_point(p, recon):
         im_3d_point = np.dot(recon.k, recon.q.rotate(p - recon.origin))
-        im_point = (int(round(im_3d_point[0]/im_3d_point[2])),
-                    int(round(im_3d_point[1]/im_3d_point[2])))
+        im_point = (int(round(im_3d_point[0] / im_3d_point[2])),
+                    int(round(im_3d_point[1] / im_3d_point[2])))
         return im_point
 
     def get_3d_point(self, geo_p):
@@ -149,14 +170,32 @@ class LatLonToImagePoint:
                                     os.strerror(errno.ENOENT),
                                     image_file)
         self.image = image
+        self.image_shape = image.shape
+        self.image_name = image_name
+        if self.get_reconstruction():
+            return True
+        return False
+
+    def get_image_shape(self, image_name):
+        image_file = self.project + '/images/' + image_name
+        image_info = magic.from_file(image_file)
+        shape_matcher = re.compile('(\d+)x(\d+)')
+        match = re.search(shape_matcher, image_info)
+        if match:
+            shape = (int(match.group(2)), int(match.group(1)))
+        else:
+            print('could not get the image size')
+            raise ImageSizeError('could not get the image size of image: ('
+                                 '%s)' % image_file)
+        self.image_shape = shape
         self.image_name = image_name
         if self.get_reconstruction():
             return True
         return False
 
     def check_coordinates(self, coordinate):
-        if 0 < coordinate[0] < self.image.shape[1]:
-            if 0 < coordinate[1] < self.image.shape[0]:
+        if 0 < coordinate[0] < self.image_shape[1]:
+            if 0 < coordinate[1] < self.image_shape[0]:
                 return True
         return False
 
@@ -170,16 +209,15 @@ class LatLonToImagePoint:
                 point_keep = (geo_p[0], geo_p[1], point.z)
         return point_keep
 
-    def get_images(self, point_3d):
+    def get_images_from_3d_point(self, point_3d):
         image_keep = None
-        vertex_keep = None
         image_and_vertex = {}
         file = self.project + '/opensfm/reconstruction.meshed.json'
         with open(file, 'r') as f:
             shots = json.load(f)[0].get('shots')
             for shot, value in shots.items():
                 image = shot
-                dist_keep = 10
+                dist_keep = 10000000
                 for vertex in value.get('vertices'):
                     dist = (vertex[0] - point_3d[0]) ** 2 + \
                            (vertex[1] - point_3d[1]) ** 2 + \
@@ -187,22 +225,35 @@ class LatLonToImagePoint:
                     if dist < dist_keep:
                         dist_keep = dist
                         image_keep = image
-                        vertex_keep = point_3d
-                if image_keep is not None:
-                    image_and_vertex.update({image_keep: vertex_keep})
+                if dist_keep < 10:
+                    image_and_vertex.update({image_keep: [point_3d,
+                                                          dist_keep]})
         return image_and_vertex
+
+    def get_images(self, lat, lon):
+        images_and_point = {}
+        geo_point = self.lat_lon_to_utm(lat, lon)
+        geo_3d_point = self.get_geo_3d_point(geo_point)
+        point3d = self.get_3d_point(geo_3d_point)
+        images_and_vertex = self.get_images_from_3d_point(point3d)
+        for image_name, vertex in images_and_vertex.items():
+            if self.get_image_shape(image_name):
+                pos = self.get_image_point(vertex[0], self.recon)
+                if self.check_coordinates(pos):
+                    images_and_point.update({image_name: [pos, vertex[1]]})
+        return images_and_point
 
     def show_coordinate_on_images(self, lat, lon):
         images_and_point = {}
         geo_point = self.lat_lon_to_utm(lat, lon)
         geo_3d_point = self.get_geo_3d_point(geo_point)
         point3d = self.get_3d_point(geo_3d_point)
-        images_and_vertex = self.get_images(point3d)
+        images_and_vertex = self.get_images_from_3d_point(point3d)
         for image_name, vertex in images_and_vertex.items():
             if self.open_image(image_name):
-                pos = self.get_image_point(vertex, self.recon)
+                pos = self.get_image_point(vertex[0], self.recon)
                 if self.check_coordinates(pos):
-                    images_and_point.update({image_name: pos})
+                    images_and_point.update({image_name: [pos, vertex[1]]})
                     temp = cv2.circle(self.image, pos, 50,
                                       (0, 0, 255), -1)
                     cv2.imwrite('/home/henrik/kode/droneMapAddon/test/' +
@@ -213,8 +264,12 @@ class LatLonToImagePoint:
 if __name__ == '__main__':
     folder = '/home/henrik/mount/henrikServer/Documents/openDroneMap/projects/'
     folder += 'hojby'
-    lat = 55.339207
-    lon = 10.419137
+    latitude = 55.339205
+    longitude = 10.419122
     gpsImage = LatLonToImagePoint(folder)
-    images = gpsImage.show_coordinate_on_images(lat, lon)
-    print(images)
+    images_and_points = gpsImage.get_images(latitude, longitude)
+    for im, p_and_d in sorted(images_and_points.items(), key=lambda x: x[1][1]):
+        print('image: ' + str(im))
+        print('point: ' + str(p_and_d[0]))
+        print('score: ' + str(p_and_d[1]))
+        print(' ')

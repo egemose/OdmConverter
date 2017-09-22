@@ -1,8 +1,7 @@
-import errno
-import os
+import json
 import re
 from collections import namedtuple
-import cv2
+import magic
 import numpy as np
 from pyquaternion import Quaternion
 from utm.utm import utmconv
@@ -13,6 +12,14 @@ class ReconstructionError(Exception):
 
 
 class NoImageError(Exception):
+    pass
+
+
+class NoCameraModelError(Exception):
+    pass
+
+
+class ImageSizeError(Exception):
     pass
 
 
@@ -29,7 +36,7 @@ class ImagePointToLatLon:
         self.gps_namedtuple = namedtuple('gps', ['lat', 'lon'])
         self.geo_model = self.get_geo_model()
         self.geo_transform = self.get_geo_transform()
-        self.image = None
+        self.image_shape = None
         self.image_name = None
         self.depth_map = None
         self.recon = None
@@ -63,6 +70,19 @@ class ImagePointToLatLon:
                                               north_offset)
         return geo_model
 
+    def get_model_image_shape(self):
+        shape = None
+        file = self.project + '/opensfm/camera_models.json'
+        with open(file, 'r') as f:
+            camera_model = json.load(f)
+            for cam in camera_model:
+                cam_data = camera_model.get(cam)
+                shape = (cam_data.get('width'), cam_data.get('height'))
+        if shape is None:
+            raise NoCameraModelError('No camera_models.json file found for '
+                                     'the project.')
+        return shape
+
     def get_reconstruction(self):
         k = None
         q = None
@@ -73,7 +93,10 @@ class ImagePointToLatLon:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
-                    k = self.get_k(float(match.group(1)), self.image)
+                    model_image_shape = self.get_model_image_shape()
+                    k = self.get_k(float(match.group(1)),
+                                   self.image_shape,
+                                   model_image_shape)
                     q = Quaternion(float(match.group(2)), float(match.group(3)),
                                    float(match.group(4)), float(match.group(5)))
                     origin = np.array([float(match.group(6)),
@@ -87,17 +110,17 @@ class ImagePointToLatLon:
         self.recon = reconstruction
 
     @staticmethod
-    def get_k(focal, image):
+    def get_k(focal, image_shape, model_image_shape):
         k = np.zeros((3, 3))
-        k[0, 0] = focal
-        k[1, 1] = focal
+        k[0, 0] = focal * image_shape[1] / model_image_shape[1]
+        k[1, 1] = focal * image_shape[0] / model_image_shape[0]
         k[2, 2] = 1
-        k[0, 2] = image.shape[1] / 2
-        k[1, 2] = image.shape[0] / 2
+        k[0, 2] = image_shape[1] / 2
+        k[1, 2] = image_shape[0] / 2
         return k
 
-    def get_depth(self, image, x, y):
-        scale = self.depth_map.shape[1] / image.shape[1]
+    def get_depth(self, x, y):
+        scale = self.depth_map.shape[1] / self.image_shape[1]
         x_new = round(scale * x)
         y_new = round(scale * y)
         depth = self.depth_map[y_new, x_new]
@@ -148,35 +171,37 @@ class ImagePointToLatLon:
         pos = self.gps_namedtuple(lat, lon)
         return pos
 
-    def open_image(self, image_name):
+    def get_image_shape(self, image_name):
         image_file = self.project + '/images/' + image_name
-        image = cv2.imread(image_file)
-        if image is None:
-            print('Image not part of the project')
-            raise FileNotFoundError(errno.ENOENT,
-                                    os.strerror(errno.ENOENT),
-                                    image_file)
-        self.image = image
+        image_info = magic.from_file(image_file)
+        shape_matcher = re.compile('(\d+)x(\d+)')
+        match = re.search(shape_matcher, image_info)
+        if match:
+            shape = (int(match.group(2)), int(match.group(1)))
+        else:
+            print('could not get the image size')
+            raise ImageSizeError('could not get the image size of image: ('
+                                 '%s)' % image_file)
+        self.image_shape = shape
         self.image_name = image_name
-        self.get_depth_map()
         self.get_reconstruction()
+        self.get_depth_map()
 
     @staticmethod
-    def check_input_coordinates(image, x, y):
-        if image.shape[1] < x:
+    def check_input_coordinates(image_shape, x, y):
+        if image_shape[1] < x:
             raise ValueError('x of %i is outside the image' % x)
         elif x < 0:
             raise ValueError('x must be positive, not %i' % x)
-        if image.shape[0] < y:
+        if image_shape[0] < y:
             raise ValueError('y of %i is outside the image' % y)
         elif y < 0:
             raise ValueError('y must be positive, not %i' % y)
 
-    def get_lat_lon(self, x, y):
-        if self.image is None:
-            raise NoImageError('Image has not been set.')
-        self.check_input_coordinates(self.image, x, y)
-        depth = self.get_depth(self.image, x, y)
+    def get_lat_lon(self, image_name, x, y):
+        self.get_image_shape(image_name)
+        self.check_input_coordinates(self.image_shape, x, y)
+        depth = self.get_depth(x, y)
         point3d = self.get_3d_point(x, y, depth, self.recon)
         utm_point = self.get_geo_3d_point(point3d)
         pos = self.utm_to_lat_lon(utm_point)
@@ -185,9 +210,8 @@ class ImagePointToLatLon:
 
 if __name__ == '__main__':
     folder = '/home/henrik/mount/henrikServer/Documents/openDroneMap/projects/'
-    folder += '2017-09-06-Pumpkins-50m-field1'
+    folder += 'hojby'
     image_pos = ImagePointToLatLon(folder)
-    image_pos.open_image('DJI_0056.JPG')
-    gps_pos = image_pos.get_lat_lon(4584, 1044)
+    gps_pos = image_pos.get_lat_lon('DJI_0311.JPG', 2196, 2226)
     print(gps_pos.lat)
     print(gps_pos.lon)
