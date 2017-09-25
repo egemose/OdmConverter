@@ -40,13 +40,41 @@ class Reconstruction:
         self.geo_transform = self.get_geo_transform()
         self.image_list = self.list_of_images()
         self.model_image_shape = self.get_model_image_shape()
+        self.ortho_size = self.get_ortho_size()
+        self.ortho_corners = self.get_ortho_corners()
         self.image_name = None
         self.image_shape = None
         self.recon = None
-
         self.depth_map = None
-
         self.model_3d = self.get_3d_model()
+
+    def get_ortho_size(self):
+        image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
+        image_info = magic.from_file(image_file)
+        shape_matcher = re.compile('(\d+) x (\d+)')
+        match = re.search(shape_matcher, image_info)
+        if match:
+            shape = (int(match.group(2)), int(match.group(1)))
+        else:
+            print('could not get the image size')
+            raise ImageSizeError('could not get the image size of image: ('
+                                 '%s)' % image_file)
+        return shape
+
+    def get_ortho_corners(self):
+        file = self.project + '/odm_orthophoto/odm_orthophoto_corners.txt'
+        corner_matcher = re.compile((self.regex_f + 'e\+(\d+) ') * 3 +
+                                    self.regex_f + 'e\+(\d+)')
+        with open(file, 'r') as f:
+            for line in f:
+                match = re.search(corner_matcher, line)
+                if match:
+                    x1 = float(match.group(1)) * 10 ** int(match.group(2))
+                    y1 = float(match.group(3)) * 10 ** int(match.group(4))
+                    x2 = float(match.group(5)) * 10 ** int(match.group(6))
+                    y2 = float(match.group(7)) * 10 ** int(match.group(8))
+                    corners = [(x1, y1), (x2, y2)]
+                    return corners
 
     def get_3d_model(self):
         model_file = self.project + '/odm_texturing/odm_textured_model_geo.obj'

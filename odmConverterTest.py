@@ -21,8 +21,16 @@ def gps2images():
     odm.show_coord_on_images(image_and_points, folder_out)
 
 
+def ortho2images():
+    folder_in = '/home/henrik/mount/henrikServer/Documents/openDroneMap/projects/'
+    folder_in += 'hojby-skra'
+    folder_out = '/home/henrik/kode/droneMapAddon/testOrtho'
+    odm = OdmConverter(folder_in)
+    image_and_points = odm.orthophoto2images(10252, 7514)
+    odm.show_coord_on_images(image_and_points, folder_out)
 
 
 if __name__ == '__main__':
     image2gps()
     gps2images()
+    ortho2images()
