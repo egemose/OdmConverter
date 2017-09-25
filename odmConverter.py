@@ -209,6 +209,21 @@ class OdmConverter:
         self.recon_model = Reconstruction(project)
         self.utm = utmconv()
 
+    def orthophoto2images(self, u, v):
+        geo_point = self.orthophoto2utm(u, v,
+                                        self.recon_model.ortho_size,
+                                        self.recon_model.ortho_corners)
+        image_and_points = self.geo2images(geo_point)
+        return image_and_points
+
+    @staticmethod
+    def orthophoto2utm(u, v, ortho_size, ortho_corners):
+        dx = ortho_corners[1][0] - ortho_corners[0][0]
+        dy = ortho_corners[0][1] - ortho_corners[1][1]
+        x = ortho_corners[0][0] + u/ortho_size[1] * dx
+        y = ortho_corners[1][1] + v/ortho_size[0] * dy
+        return x, y
+
     def show_coord_on_images(self, image_and_points, folder):
         for image_name, point in image_and_points.items():
             image_file_in = self.recon_model.project + '/images/' + image_name
@@ -218,8 +233,12 @@ class OdmConverter:
             cv2.imwrite(image_file_out, image)
 
     def gps2images(self, lat, lon):
-        image_and_points = {}
         geo_point = self.gps2utm(lat, lon, self.recon_model.geo_model)
+        image_and_points = self.geo2images(geo_point)
+        return image_and_points
+
+    def geo2images(self, geo_point):
+        image_and_points = {}
         geo_3d_point = self.utm2geo3d(geo_point, self.recon_model.model_3d)
         point3d = self.geo3d2point(geo_3d_point, self.recon_model.geo_transform)
         for image_name, recon in self.recon_model.images_from_recon():
