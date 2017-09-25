@@ -26,7 +26,7 @@ class NoImageError(Exception):
 
 
 class Reconstruction:
-    def __init__(self, project):
+    def __init__(self, project, *, only_image2gps):
         self.project = project
         self.regex_f = '(-?\d+\.\d+)'
         self.geo_model_namedtuple = namedtuple('geo_model', ['hemisphere',
@@ -40,13 +40,14 @@ class Reconstruction:
         self.geo_transform = self.get_geo_transform()
         self.image_list = self.list_of_images()
         self.model_image_shape = self.get_model_image_shape()
-        self.ortho_size = self.get_ortho_size()
-        self.ortho_corners = self.get_ortho_corners()
         self.image_name = None
         self.image_shape = None
         self.recon = None
         self.depth_map = None
-        self.model_3d = self.get_3d_model()
+        if not only_image2gps:
+            self.model_3d = self.get_3d_model()
+            self.ortho_corners = self.get_ortho_corners()
+            self.ortho_size = self.get_ortho_size()
 
     def get_ortho_size(self):
         image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
@@ -233,8 +234,9 @@ class Reconstruction:
 
 
 class OdmConverter:
-    def __init__(self, project):
-        self.recon_model = Reconstruction(project)
+    def __init__(self, project, *, only_image2gps=False):
+        self.recon_model = Reconstruction(project,
+                                          only_image2gps=only_image2gps)
         self.utm = utmconv()
 
     def orthophoto2images(self, u, v):
