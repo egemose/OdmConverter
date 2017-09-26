@@ -127,7 +127,6 @@ class Reconstruction:
                                                              'north_offset'])
         self.reconstruction_namedtuple = namedtuple('reconstruction',
                                                     ['k', 'q', 'origin'])
-        self.point_namedtuple = namedtuple('point', ['x', 'y', 'z'])
         self.geo_model = self.get_geo_model()
         self.geo_transform = self.get_geo_transform()
         self.image_list = self.list_of_images()
@@ -144,8 +143,8 @@ class Reconstruction:
     def get_ortho_size(self):
         image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
         regex = '(\d+) x (\d+)'
-        shape = self.get_image_info(image_file, regex)
-        return shape
+        size = self.get_image_info(image_file, regex)
+        return size
 
     def get_ortho_corners(self):
         file = self.project + '/odm_orthophoto/odm_orthophoto_corners.txt'
@@ -155,8 +154,10 @@ class Reconstruction:
             for line in f:
                 match = re.search(corner_matcher, line)
                 if match:
-                    p1 = (float(match.group(1)), float(match.group(2)))
-                    p2 = (float(match.group(3)), float(match.group(4)))
+                    p1 = np.array([float(match.group(1)),
+                                   float(match.group(4))])
+                    p2 = np.array([float(match.group(3)),
+                                   float(match.group(2))])
                     corners = [p1, p2]
                     return corners
 
@@ -168,9 +169,9 @@ class Reconstruction:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
-                    point = self.point_namedtuple(float(match.group(1)),
-                                                  float(match.group(2)),
-                                                  float(match.group(3)))
+                    point = np.array([float(match.group(1)),
+                                      float(match.group(2)),
+                                      float(match.group(3))])
                     model_3d.append(point)
         return model_3d
 
@@ -228,17 +229,17 @@ class Reconstruction:
             camera_model = json.load(f)
             for cam in camera_model:
                 cam_data = camera_model.get(cam)
-                shape = (cam_data.get('height'), cam_data.get('width'))
+                shape = (cam_data.get('width'), cam_data.get('height'))
         if shape is None:
             raise NoCameraModelError('No camera_models.json file found for '
                                      'the project.')
         return shape
 
-    def get_image_shape(self):
+    def get_image_size(self):
         image_file = self.project + '/images/' + self.image_name
         regex = '(\d+)x(\d+)'
-        shape = self.get_image_info(image_file, regex)
-        return shape
+        size = self.get_image_info(image_file, regex)
+        return size
 
     @staticmethod
     def get_image_info(image_file, regex):
@@ -246,12 +247,12 @@ class Reconstruction:
         image_info = magic.from_file(image_file)
         match = re.search(matcher, image_info)
         if match:
-            shape = (int(match.group(2)), int(match.group(1)))
+            size = np.array([int(match.group(1)), int(match.group(2))])
         else:
             print('could not get the image size')
             raise ImageSizeError('could not get the image size of image: '
                                  '(%s)' % image_file)
-        return shape
+        return size
 
     def get_reconstruction(self):
         recon = self.images_from_recon(self.image_name).__next__()
@@ -277,7 +278,7 @@ class Reconstruction:
 
     def parse_recon(self, match):
         self.image_name = match.group(1)
-        self.image_shape = self.get_image_shape()
+        self.image_shape = self.get_image_size()
         k = self.get_k(float(match.group(2)))
         q = Quaternion(float(match.group(3)), float(match.group(4)),
                        float(match.group(5)), float(match.group(6)))
@@ -288,12 +289,9 @@ class Reconstruction:
         return recon
 
     def get_k(self, focal):
-        k = np.zeros((3, 3))
-        k[0, 0] = focal * self.image_shape[1] / self.model_image_shape[1]
-        k[1, 1] = focal * self.image_shape[0] / self.model_image_shape[0]
-        k[2, 2] = 1
-        k[0, 2] = self.image_shape[1] / 2
-        k[1, 2] = self.image_shape[0] / 2
+        d = np.append(focal * self.image_shape / self.model_image_shape, [1])
+        k = np.diag(d)
+        k[:2, 2] = self.image_shape / 2
         return k
 
     def get_depth_map(self):
@@ -307,9 +305,9 @@ class Reconstruction:
         return depth_map
 
     def get_depth(self, u, v):
-        scale = self.depth_map.shape[1] / self.image_shape[1]
-        x_new = round(scale * u)
-        y_new = round(scale * v)
+        scale = self.depth_map.shape[1] / self.image_shape[0]
+        x_new = int(round(scale * u))
+        y_new = int(round(scale * v))
         depth = self.depth_map[y_new, x_new]
         if depth == 0:
             depth = self.find_nearest_nonzero(self.depth_map, x_new, y_new)
@@ -369,19 +367,17 @@ class OdmConverter:
 
     @staticmethod
     def utm2orthophoto(x, y, ortho_size, ortho_corners):
-        dx = ortho_corners[1][0] - ortho_corners[0][0]
-        dy = ortho_corners[0][1] - ortho_corners[1][1]
-        u = (x - ortho_corners[0][0]) / dx * ortho_size[1]
-        v = (y - ortho_corners[1][1]) / dy * ortho_size[0]
-        return u, v
+        point = np.array([x, y])
+        dp = ortho_corners[1] - ortho_corners[0]
+        image_point = (point - ortho_corners[0]) * ortho_size / dp
+        return image_point
 
     @staticmethod
     def orthophoto2utm(u, v, ortho_size, ortho_corners):
-        dx = ortho_corners[1][0] - ortho_corners[0][0]
-        dy = ortho_corners[0][1] - ortho_corners[1][1]
-        x = ortho_corners[0][0] + u / ortho_size[1] * dx
-        y = ortho_corners[1][1] + v / ortho_size[0] * dy
-        return x, y
+        image_point = np.array([u, v])
+        dp = ortho_corners[1] - ortho_corners[0]
+        point = image_point * dp / ortho_size + ortho_corners[0]
+        return point
 
     def geo2images(self, geo_point):
         image_and_points = {}
@@ -414,11 +410,12 @@ class OdmConverter:
     def utm2geo3d(geo_p, model_3d):
         dist_keep = 100000
         point_keep = 0
+        geo_point = np.array(geo_p)
         for point in model_3d:
-            dist = (point.x - geo_p[0]) ** 2 + (point.y - geo_p[1]) ** 2
+            dist = ((point[:2] - geo_point) ** 2).sum()
             if dist < dist_keep:
                 dist_keep = dist
-                point_keep = (geo_p[0], geo_p[1], point.z)
+                point_keep = (geo_p[0], geo_p[1], point[2])
         return point_keep
 
     @staticmethod
@@ -431,24 +428,23 @@ class OdmConverter:
     @staticmethod
     def world2image(p, recon):
         im_3d_point = np.dot(recon.k, recon.q.rotate(p - recon.origin))
-        im_point = (int(round(im_3d_point[0] / im_3d_point[2])),
-                    int(round(im_3d_point[1] / im_3d_point[2])))
-        return im_point
+        u, v = (im_3d_point[:2] / im_3d_point[2]).astype(int)
+        return u, v
 
     @staticmethod
     def check_output_coord(coordinate, image_shape):
-        if 0 < coordinate[0] < image_shape[1]:
-            if 0 < coordinate[1] < image_shape[0]:
+        if 0 < coordinate[0] < image_shape[0]:
+            if 0 < coordinate[1] < image_shape[1]:
                 return True
         return False
 
     @staticmethod
     def check_input_coord(u, v, image_shape):
-        if image_shape[1] < u:
+        if image_shape[0] < u:
             raise ValueError('x of %i is outside the image' % u)
         elif u < 0:
             raise ValueError('x must be positive, not %i' % u)
-        if image_shape[0] < v:
+        if image_shape[1] < v:
             raise ValueError('y of %i is outside the image' % v)
         elif v < 0:
             raise ValueError('y must be positive, not %i' % v)
