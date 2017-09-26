@@ -26,7 +26,7 @@ class NoImageError(Exception):
 
 
 class Reconstruction:
-    def __init__(self, project, *, only_image2gps):
+    def __init__(self, project, only_image2geodetic):
         self.project = project
         self.regex_f = '(-?\d+\.\d+)'
         self.geo_model_namedtuple = namedtuple('geo_model', ['hemisphere',
@@ -44,7 +44,7 @@ class Reconstruction:
         self.image_shape = None
         self.recon = None
         self.depth_map = None
-        if not only_image2gps:
+        if not only_image2geodetic:
             self.model_3d = self.get_3d_model()
             self.ortho_corners = self.get_ortho_corners()
             self.ortho_size = self.get_ortho_size()
@@ -234,9 +234,8 @@ class Reconstruction:
 
 
 class OdmConverter:
-    def __init__(self, project, *, only_image2gps=False):
-        self.recon_model = Reconstruction(project,
-                                          only_image2gps=only_image2gps)
+    def __init__(self, project, *, only_image2geodetic=False):
+        self.recon_model = Reconstruction(project, only_image2geodetic)
         self.utm = utmconv()
 
     def image2orthophoto(self, u, v):
@@ -262,18 +261,18 @@ class OdmConverter:
             image = cv2.circle(image, point, 100, (0, 0, 255), 10)
             cv2.imwrite(image_file_out, image)
 
-    def gps2images(self, lat, lon):
-        geo_point = self.gps2utm(lat, lon, self.recon_model.geo_model)
+    def geodetic2images(self, lat, lon):
+        geo_point = self.geodetic2utm(lat, lon, self.recon_model.geo_model)
         image_and_points = self.geo2images(geo_point)
         return image_and_points
 
     def set_image(self, image_name):
         self.recon_model.set_image(image_name)
 
-    def image_point2gps(self, u, v):
+    def image_point2geodetic(self, u, v):
         utm_point = self.image2utm(u, v)
-        gps = self.utm2gps(utm_point, self.recon_model.geo_model)
-        return gps
+        geodetic = self.utm2geodetic(utm_point, self.recon_model.geo_model)
+        return geodetic
 
     @staticmethod
     def utm2orthophoto(x, y, ortho_size, ortho_corners):
@@ -301,7 +300,7 @@ class OdmConverter:
                 image_and_points.update({image_name: im_coord})
         return image_and_points
 
-    def gps2utm(self, lat, lon, geo_model):
+    def geodetic2utm(self, lat, lon, geo_model):
         hemisphere, zone, e_offset, n_offset = geo_model
         _, _, _, east, north = self.utm.geodetic_to_utm(lat, lon)
         geo_point = (east - e_offset, north - n_offset)
@@ -372,7 +371,7 @@ class OdmConverter:
         geo_p = geo_p_4d[0:3]
         return geo_p
 
-    def utm2gps(self, p, geo_model):
+    def utm2geodetic(self, p, geo_model):
         hemisphere, zone, e_offset, n_offset = geo_model
         east = p[0] + e_offset
         north = p[1] + n_offset
