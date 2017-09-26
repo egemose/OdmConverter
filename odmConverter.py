@@ -239,6 +239,14 @@ class OdmConverter:
                                           only_image2gps=only_image2gps)
         self.utm = utmconv()
 
+    def image2orthophoto(self, u, v):
+        utm_point = self.image2utm(u, v)
+        u_ortho, v_ortho = self.utm2orthophoto(utm_point[0], utm_point[1],
+                                               self.recon_model.ortho_size,
+                                               self.recon_model.ortho_corners)
+        ortho = (round(u_ortho), round(v_ortho))
+        return ortho
+
     def orthophoto2images(self, u, v):
         geo_point = self.orthophoto2utm(u, v,
                                         self.recon_model.ortho_size,
@@ -266,6 +274,14 @@ class OdmConverter:
         utm_point = self.image2utm(u, v)
         gps = self.utm2gps(utm_point, self.recon_model.geo_model)
         return gps
+
+    @staticmethod
+    def utm2orthophoto(x, y, ortho_size, ortho_corners):
+        dx = ortho_corners[1][0] - ortho_corners[0][0]
+        dy = ortho_corners[0][1] - ortho_corners[1][1]
+        u = (x - ortho_corners[0][0]) / dx * ortho_size[1]
+        v = (y - ortho_corners[1][1]) / dy * ortho_size[0]
+        return u, v
 
     @staticmethod
     def orthophoto2utm(u, v, ortho_size, ortho_corners):

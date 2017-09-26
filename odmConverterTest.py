@@ -26,7 +26,14 @@ def ortho2images():
     ODM.show_coord_on_images(image_and_points, folder_out)
 
 
+def image2ortho():
+    ODM.set_image('DJI_0312.JPG')
+    x, y = ODM.image2orthophoto(3300, 1266)
+    print((x, y))
+
+
 if __name__ == '__main__':
     image2gps()
     gps2images()
     ortho2images()
+    image2ortho()
