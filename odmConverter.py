@@ -246,14 +246,6 @@ class OdmConverter:
         image_and_points = self.geo2images(geo_point)
         return image_and_points
 
-    @staticmethod
-    def orthophoto2utm(u, v, ortho_size, ortho_corners):
-        dx = ortho_corners[1][0] - ortho_corners[0][0]
-        dy = ortho_corners[0][1] - ortho_corners[1][1]
-        x = ortho_corners[0][0] + u/ortho_size[1] * dx
-        y = ortho_corners[1][1] + v/ortho_size[0] * dy
-        return x, y
-
     def show_coord_on_images(self, image_and_points, folder):
         for image_name, point in image_and_points.items():
             image_file_in = self.recon_model.project + '/images/' + image_name
@@ -266,6 +258,22 @@ class OdmConverter:
         geo_point = self.gps2utm(lat, lon, self.recon_model.geo_model)
         image_and_points = self.geo2images(geo_point)
         return image_and_points
+
+    def set_image(self, image_name):
+        self.recon_model.set_image(image_name)
+
+    def image_point2gps(self, u, v):
+        utm_point = self.image2utm(u, v)
+        gps = self.utm2gps(utm_point, self.recon_model.geo_model)
+        return gps
+
+    @staticmethod
+    def orthophoto2utm(u, v, ortho_size, ortho_corners):
+        dx = ortho_corners[1][0] - ortho_corners[0][0]
+        dy = ortho_corners[0][1] - ortho_corners[1][1]
+        x = ortho_corners[0][0] + u/ortho_size[1] * dx
+        y = ortho_corners[1][1] + v/ortho_size[0] * dy
+        return x, y
 
     def geo2images(self, geo_point):
         image_and_points = {}
@@ -282,6 +290,13 @@ class OdmConverter:
         _, _, _, east, north = self.utm.geodetic_to_utm(lat, lon)
         geo_point = (east - e_offset, north - n_offset)
         return geo_point
+
+    def image2utm(self, u, v):
+        self.check_input_coord(u, v, self.recon_model.image_shape)
+        depth = self.recon_model.get_depth(u, v)
+        point3d = self.image2world(u, v, depth, self.recon_model.recon)
+        utm_point = self.point2utm(point3d, self.recon_model.geo_transform)
+        return utm_point
 
     @staticmethod
     def utm2geo3d(geo_p, model_3d):
@@ -314,17 +329,6 @@ class OdmConverter:
             if 0 < coordinate[1] < image_shape[0]:
                 return True
         return False
-
-    def set_image(self, image_name):
-        self.recon_model.set_image(image_name)
-
-    def image_point2gps(self, u, v):
-        self.check_input_coord(u, v, self.recon_model.image_shape)
-        depth = self.recon_model.get_depth(u, v)
-        point3d = self.image2world(u, v, depth, self.recon_model.recon)
-        utm_point = self.point2utm(point3d, self.recon_model.geo_transform)
-        gps = self.utm2gps(utm_point, self.recon_model.geo_model)
-        return gps
 
     @staticmethod
     def check_input_coord(u, v, image_shape):
