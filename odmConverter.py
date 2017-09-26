@@ -76,11 +76,12 @@ orthophoto2images (u, v)
     u, v: The orthophoto coordinates measured from top left. [pixels]
     Returns: dict of images as keys and u, v af values.
 
-show_coord_on_images (image_and_points, folder)
+show_coord_on_images (image_and_points, folder, color=(0, 0, 255))
     Use to visualize the found images and point from geodetic2images
     or orthophoto2images. Added as red circle around the point.
     image_and_points: dict of images as keys and u, v af values.
     folder: Place to save the images.
+    color: The color to draw with.
 
 Revision
 2017-09-26 HDE: Library created
@@ -112,6 +113,10 @@ class NoImageError(Exception):
     pass
 
 
+class MapError(Exception):
+    pass
+
+
 class Reconstruction:
     def __init__(self, project, only_image2geodetic):
         self.project = project
@@ -138,30 +143,21 @@ class Reconstruction:
 
     def get_ortho_size(self):
         image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
-        image_info = magic.from_file(image_file)
-        shape_matcher = re.compile('(\d+) x (\d+)')
-        match = re.search(shape_matcher, image_info)
-        if match:
-            shape = (int(match.group(2)), int(match.group(1)))
-        else:
-            print('could not get the image size')
-            raise ImageSizeError('could not get the image size of image: ('
-                                 '%s)' % image_file)
+        regex = '(\d+) x (\d+)'
+        shape = self.get_image_info(image_file, regex)
         return shape
 
     def get_ortho_corners(self):
         file = self.project + '/odm_orthophoto/odm_orthophoto_corners.txt'
-        corner_matcher = re.compile((self.regex_f + 'e\+(\d+) ') * 3 +
-                                    self.regex_f + 'e\+(\d+)')
+        regex = '(-?\d+\.\d+e\+\d+)'
+        corner_matcher = re.compile((regex + ' ') * 3 + regex)
         with open(file, 'r') as f:
             for line in f:
                 match = re.search(corner_matcher, line)
                 if match:
-                    x1 = float(match.group(1)) * 10 ** int(match.group(2))
-                    y1 = float(match.group(3)) * 10 ** int(match.group(4))
-                    x2 = float(match.group(5)) * 10 ** int(match.group(6))
-                    y2 = float(match.group(7)) * 10 ** int(match.group(8))
-                    corners = [(x1, y1), (x2, y2)]
+                    p1 = (float(match.group(1)), float(match.group(2)))
+                    p2 = (float(match.group(3)), float(match.group(4)))
+                    corners = [p1, p2]
                     return corners
 
     def get_3d_model(self):
@@ -240,19 +236,25 @@ class Reconstruction:
 
     def get_image_shape(self):
         image_file = self.project + '/images/' + self.image_name
+        regex = '(\d+)x(\d+)'
+        shape = self.get_image_info(image_file, regex)
+        return shape
+
+    @staticmethod
+    def get_image_info(image_file, regex):
+        matcher = re.compile(regex)
         image_info = magic.from_file(image_file)
-        shape_matcher = re.compile('(\d+)x(\d+)')
-        match = re.search(shape_matcher, image_info)
+        match = re.search(matcher, image_info)
         if match:
             shape = (int(match.group(2)), int(match.group(1)))
         else:
             print('could not get the image size')
-            raise ImageSizeError('could not get the image size of image: ('
-                                 '%s)' % image_file)
+            raise ImageSizeError('could not get the image size of image: '
+                                 '(%s)' % image_file)
         return shape
 
     def get_reconstruction(self):
-        _, recon = self.images_from_recon(self.image_name).__next__()
+        recon = self.images_from_recon(self.image_name).__next__()
         if recon is None:
             raise ReconstructionError('Image \'%s\' is not part of the '
                                       'reconstruction.nvm file.' %
@@ -270,16 +272,20 @@ class Reconstruction:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
-                    self.image_name = match.group(1)
-                    self.image_shape = self.get_image_shape()
-                    k = self.get_k(float(match.group(2)))
-                    q = Quaternion(float(match.group(3)), float(match.group(4)),
-                                   float(match.group(5)), float(match.group(6)))
-                    origin = np.array([float(match.group(7)),
-                                       float(match.group(8)),
-                                       float(match.group(9))])
-                    recon = self.reconstruction_namedtuple(k, q, origin)
-                    yield self.image_name, recon
+                    recon = self.parse_recon(match)
+                    yield recon
+
+    def parse_recon(self, match):
+        self.image_name = match.group(1)
+        self.image_shape = self.get_image_shape()
+        k = self.get_k(float(match.group(2)))
+        q = Quaternion(float(match.group(3)), float(match.group(4)),
+                       float(match.group(5)), float(match.group(6)))
+        origin = np.array([float(match.group(7)),
+                           float(match.group(8)),
+                           float(match.group(9))])
+        recon = self.reconstruction_namedtuple(k, q, origin)
+        return recon
 
     def get_k(self, focal):
         k = np.zeros((3, 3))
@@ -330,7 +336,7 @@ class OdmConverter:
         u_ortho, v_ortho = self.utm2orthophoto(utm_point[0], utm_point[1],
                                                self.recon_model.ortho_size,
                                                self.recon_model.ortho_corners)
-        ortho = (round(u_ortho), round(v_ortho))
+        ortho = (int(u_ortho), int(v_ortho))
         return ortho
 
     def orthophoto2images(self, u, v):
@@ -340,12 +346,12 @@ class OdmConverter:
         image_and_points = self.geo2images(geo_point)
         return image_and_points
 
-    def show_coord_on_images(self, image_and_points, folder):
+    def show_coord_on_images(self, image_and_points, folder, color=(0, 0, 255)):
         for image_name, point in image_and_points.items():
             image_file_in = self.recon_model.project + '/images/' + image_name
             image_file_out = folder + '/' + image_name
             image = cv2.imread(image_file_in)
-            image = cv2.circle(image, point, 100, (0, 0, 255), 10)
+            image = cv2.circle(image, point, 100, color, 10)
             cv2.imwrite(image_file_out, image)
 
     def geodetic2images(self, lat, lon):
@@ -373,25 +379,29 @@ class OdmConverter:
     def orthophoto2utm(u, v, ortho_size, ortho_corners):
         dx = ortho_corners[1][0] - ortho_corners[0][0]
         dy = ortho_corners[0][1] - ortho_corners[1][1]
-        x = ortho_corners[0][0] + u/ortho_size[1] * dx
-        y = ortho_corners[1][1] + v/ortho_size[0] * dy
+        x = ortho_corners[0][0] + u / ortho_size[1] * dx
+        y = ortho_corners[1][1] + v / ortho_size[0] * dy
         return x, y
 
     def geo2images(self, geo_point):
         image_and_points = {}
         geo_3d_point = self.utm2geo3d(geo_point, self.recon_model.model_3d)
         point3d = self.geo3d2point(geo_3d_point, self.recon_model.geo_transform)
-        for image_name, recon in self.recon_model.images_from_recon():
+        for recon in self.recon_model.images_from_recon():
             im_coord = self.world2image(point3d, recon)
             if self.check_output_coord(im_coord, self.recon_model.image_shape):
-                image_and_points.update({image_name: im_coord})
+                image_and_points.update({self.recon_model.image_name: im_coord})
         return image_and_points
 
     def geodetic2utm(self, lat, lon, geo_model):
         hemisphere, zone, e_offset, n_offset = geo_model
-        _, _, _, east, north = self.utm.geodetic_to_utm(lat, lon)
-        geo_point = (east - e_offset, north - n_offset)
-        return geo_point
+        hemisphere2, zone2, _, east, north = self.utm.geodetic_to_utm(lat, lon)
+        if hemisphere == hemisphere2 and zone == zone2:
+            geo_point = (east - e_offset, north - n_offset)
+            return geo_point
+        else:
+            raise MapError('Conversion from geodetic to utm do not match the '
+                           'geo model from OpenDroneMap')
 
     def image2utm(self, u, v):
         self.check_input_coord(u, v, self.recon_model.image_shape)
