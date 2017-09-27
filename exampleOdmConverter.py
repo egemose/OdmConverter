@@ -1,6 +1,7 @@
 # *****************************************************************************
-# OpenDroneMap image / geodetic coordinates converter
-# Copyright (c) 2017-2017, Henrik Dyrberg Egemose <hesc@mmmi.sdu.dk>
+# OpenDroneMap converter between image and geodetic coordinates. It is part
+# of InvaDrone, a research project by the University of Southern Denmark (SDU).
+# Copyright (c) 2017, Henrik Dyrberg Egemose <hesc@mmmi.sdu.dk>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -26,10 +27,12 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # *****************************************************************************
 """
-testOdmConverter shows how the OdmConverter can be used.
+testOdmConverter shows how the OdmConverter class can be used.
 
 The script uses the OdmConverter class located in odmConverter.py
-The script is implemented using python 3 and may not be backwards compatible.
+
+It is required that an ODM project have been made first. Since the software
+uses the generated file from ODM
 
 Revision
 2017-09-26 HDE: Example script created
@@ -37,41 +40,44 @@ Revision
 
 from odmConverter import OdmConverter
 
-# OpenDroneMap projects folder
-folder_in = '/home/henrik/mount/henrikServer/Documents/openDroneMap/projects/'
-# The project of interest
-folder_in += 'hojby-skra'
+# OpenDroneMap project folder
+project_folder = ''  # The path where the ODM project in located '/home/ODM'
 # init the class
-ODM = OdmConverter(folder_in)
-# ODM = OdmConverter(folder_in, only_image2gps=True)
+ODM = OdmConverter(project_folder)
+# if the use is to only convert image point to geodetic the initialization is
+# faster with use of the only_image2geodetic=True i.e
+# ODM = OdmConverter(project_folder, only_image2gps=True)
 
 
 # use of image_point2geodetic
 def image2geodetic():
-    ODM.set_image('DJI_0312.JPG')
-    geodetic = ODM.image_point2geodetic(3300, 1266)
-    print(geodetic)
+    image = ''  # the name of a image in the ODM images folder, 'DJI_0001.JPG'
+    uv = (1234, 321)  # the image coordinate measured in pixels from top left.
+    ODM.set_image(image)
+    lat, lon = ODM.image_point2geodetic(uv[0], uv[1])
+    print((lat, lon))
 
 
 # use of geodetic2images and show_coord_on_images
 def geodetic2images():
-    folder_out = '/home/henrik/kode/droneMapAddon/testGps'
-    latitude = 55.338876717598048
-    longitude = 10.418817711878946
+    folder_out = ''  # A folder to save images in '/home/testGeo'
+    latitude = 0.00  # latitude of geodetic point in degrees
+    longitude = 0.00  # longitude of geodetic point in degrees
     image_and_points = ODM.geodetic2images(latitude, longitude)
     ODM.show_coord_on_images(image_and_points, folder_out)
 
 
 # use of orthophoto2images and show_coord_on_images
 def ortho2images():
-    folder_out = '/home/henrik/kode/droneMapAddon/testOrtho'
+    folder_out = ''  # A folder to save images in '/home/testOrtho'
     image_and_points = ODM.orthophoto2images(10252, 7514)
     ODM.show_coord_on_images(image_and_points, folder_out)
 
 
 # use of image2orthophoto
 def image2ortho():
-    ODM.set_image('DJI_0312.JPG')
+    image = ''  # the name of a image in the ODM images folder, 'DJI_0001.JPG'
+    ODM.set_image(image)
     x, y = ODM.image2orthophoto(3300, 1266)
     print((x, y))
 
