@@ -1,6 +1,7 @@
 # *****************************************************************************
-# OpenDroneMap image / geodetic coordinates converter
-# Copyright (c) 2017-2017, Henrik Dyrberg Egemose <hesc@mmmi.sdu.dk>
+# OpenDroneMap converter between image and geodetic coordinates. It is part
+# of InvaDrone, a research project by the University of Southern Denmark (SDU).
+# Copyright (c) 2017, Henrik Dyrberg Egemose <hesc@mmmi.sdu.dk>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -29,10 +30,18 @@
 OdmConverter implements conversion between geodetic coordinates and image
 coordinates and between image and orthophoto.
 
-The class utilizes the utmconv class located in utm/utm.py.
-The class uses the generated files in a OpenDroneMap project.
+The class utilizes the utmconv class from https://github.com/FroboLab/frobomind
+The class uses the generated files from a OpenDroneMap project.
+    http://opendronemap.org/ or https://github.com/OpenDroneMap/OpenDroneMap
+
 Functions check some inputs ranges but do not rely on it.
 The class is implemented using python 3 and may not be backwards compatible.
+
+Dependencies:
+    OpenCV
+    python-magic (pip install python-magic)
+    numpy (pip install numpy)
+    pyquaternion (pip install pyquaternion)
 
 OdmConverter uses the following generated files from OpenDroneMap projects:
     All images in the "images" folder.
@@ -98,26 +107,33 @@ from utm.utm import utmconv
 
 
 class ReconstructionError(Exception):
+    """Error with the reconstruction"""
     pass
 
 
 class NoCameraModelError(Exception):
+    """Error with loading the camera model"""
     pass
 
 
 class ImageSizeError(Exception):
+    """Error with getting the image size"""
     pass
 
 
 class NoImageError(Exception):
+    """Error with getting the images"""
     pass
 
 
 class MapError(Exception):
+    """Error with the utm conversion"""
     pass
 
 
 class Reconstruction:
+    """Class to read and hold the reconstruction information from a
+    OpenDroneMap project"""
     def __init__(self, project, only_image2geodetic):
         self.project = project
         self.regex_f = '(-?\d+\.\d+)'
@@ -141,12 +157,14 @@ class Reconstruction:
             self.ortho_size = self.get_ortho_size()
 
     def get_ortho_size(self):
+        """read the size of of the ODM orthophoto"""
         image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
         regex = '(\d+) x (\d+)'
         size = self.get_image_info(image_file, regex)
         return size
 
     def get_ortho_corners(self):
+        """read the utm coordinates for the ODM orthophoto corners"""
         file = self.project + '/odm_orthophoto/odm_orthophoto_corners.txt'
         regex = '(-?\d+\.\d+e\+\d+)'
         corner_matcher = re.compile((regex + ' ') * 3 + regex)
@@ -162,6 +180,7 @@ class Reconstruction:
                     return corners
 
     def get_3d_model(self):
+        """read the georeferenced 3d model"""
         model_file = self.project + '/odm_texturing/odm_textured_model_geo.obj'
         model_3d = []
         row_matcher = re.compile('v' + (' ' + self.regex_f) * 3)
@@ -176,11 +195,13 @@ class Reconstruction:
         return model_3d
 
     def list_of_images(self):
+        """Get at list of all images used for the ODM project"""
         image_folder = self.project + '/images/*.JPG'
         images = glob.glob(image_folder)
         return images
 
     def get_geo_transform(self):
+        """Read the georeferencing transformation matrix"""
         geo_file = self.project \
                    + '/odm_georeferencing/odm_georeferencing_transform.txt'
         geo_transform = np.zeros((4, 4))
@@ -193,6 +214,7 @@ class Reconstruction:
         return geo_transform
 
     def get_geo_model(self):
+        """Read the utm model used by ODM"""
         geo_file = self.project \
                    + '/odm_georeferencing/odm_georeferencing_model_geo.txt'
         with open(geo_file, 'r') as f:
@@ -210,19 +232,20 @@ class Reconstruction:
         return geo_model
 
     def set_image(self, image_name):
+        """Set the current image to be processed and load the
+        corresponding reconstruction data"""
         image_file = self.project + '/images/' + image_name
         if image_file in self.image_list:
             self.image_name = image_name
-            self.update_recon_model()
+            self.recon = self.get_reconstruction()
+            self.depth_map = self.get_depth_map()
         else:
             raise NoImageError('Image (%s) is not part of the project.' %
                                image_name)
 
-    def update_recon_model(self):
-        self.recon = self.get_reconstruction()
-        self.depth_map = self.get_depth_map()
-
     def get_model_image_shape(self):
+        """Get the size of the images used in the reconstruction. May be
+        different from the input image size if ODM have resized the images"""
         shape = None
         file = self.project + '/opensfm/camera_models.json'
         with open(file, 'r') as f:
@@ -236,6 +259,7 @@ class Reconstruction:
         return shape
 
     def get_image_size(self):
+        """Get the size of the input images"""
         image_file = self.project + '/images/' + self.image_name
         regex = '(\d+)x(\d+)'
         size = self.get_image_info(image_file, regex)
@@ -243,6 +267,7 @@ class Reconstruction:
 
     @staticmethod
     def get_image_info(image_file, regex):
+        """Reads the image info and returns the size"""
         matcher = re.compile(regex)
         image_info = magic.from_file(image_file)
         match = re.search(matcher, image_info)
@@ -255,6 +280,8 @@ class Reconstruction:
         return size
 
     def get_reconstruction(self):
+        """Reads the reconstruction.nvm file and find the reconstruction
+        corresponding to the current image"""
         recon = self.images_from_recon(self.image_name).__next__()
         if recon is None:
             raise ReconstructionError('Image \'%s\' is not part of the '
@@ -263,6 +290,8 @@ class Reconstruction:
         return recon
 
     def images_from_recon(self, image_name=None):
+        """Read the reconstruction.nvm file and return the reconstruction
+        for each image"""
         if image_name is None:
             re_string = 'undistorted/(.*)'
         else:
@@ -277,6 +306,7 @@ class Reconstruction:
                     yield recon
 
     def parse_recon(self, match):
+        """parses the reconstruction data into the corresponding variables"""
         self.image_name = match.group(1)
         self.image_shape = self.get_image_size()
         k = self.get_k(float(match.group(2)))
@@ -289,12 +319,14 @@ class Reconstruction:
         return recon
 
     def get_k(self, focal):
+        """Computes the k matrix give the focal length"""
         d = np.append(focal * self.image_shape / self.model_image_shape, [1])
         k = np.diag(d)
         k[:2, 2] = self.image_shape / 2
         return k
 
     def get_depth_map(self):
+        """Reads the depth map"""
         depth_map_file = self.project + '/opensfm/depthmaps/' \
                          + self.image_name + '.clean.npz'
         try:
@@ -305,6 +337,8 @@ class Reconstruction:
         return depth_map
 
     def get_depth(self, u, v):
+        """Get the depth at a given image coordinate, or closes non-zero
+        depth"""
         scale = self.depth_map.shape[1] / self.image_shape[0]
         x_new = int(round(scale * u))
         y_new = int(round(scale * v))
@@ -318,6 +352,7 @@ class Reconstruction:
 
     @staticmethod
     def find_nearest_nonzero(depth_map, x, y):
+        """Find the closes non-zero depth"""
         row, col = np.nonzero(depth_map)
         min_idx = ((row - y) ** 2 + (col - x) ** 2).argmin()
         depth = depth_map[row[min_idx], col[min_idx]]
@@ -325,11 +360,20 @@ class Reconstruction:
 
 
 class OdmConverter:
+    """Class for converting between image and geodetic coordinates and
+    between image and orthophoto coordinates."""
     def __init__(self, project, *, only_image2geodetic=False):
         self.recon_model = Reconstruction(project, only_image2geodetic)
         self.utm = utmconv()
 
+    def set_image(self, image_name):
+        """Set the current image to be processed and load the corresponding
+        data. Used before image_point2geodetic and image2orthophoto"""
+        self.recon_model.set_image(image_name)
+
     def image2orthophoto(self, u, v):
+        """With a point (u, v) in a image, finds the corresponding point in the
+        orthophoto (both tiff and png)"""
         utm_point = self.image2utm(u, v)
         u_ortho, v_ortho = self.utm2orthophoto(utm_point[0], utm_point[1],
                                                self.recon_model.ortho_size,
@@ -338,6 +382,10 @@ class OdmConverter:
         return ortho
 
     def orthophoto2images(self, u, v):
+        """With a given point (u, v) in the orthophoto (both tiff and png)
+        finds the images where the point is visible together with the image
+        coordinates. Returned as a dict with image names as key and
+        coordinates as values"""
         geo_point = self.orthophoto2utm(u, v,
                                         self.recon_model.ortho_size,
                                         self.recon_model.ortho_corners)
@@ -345,6 +393,9 @@ class OdmConverter:
         return image_and_points
 
     def show_coord_on_images(self, image_and_points, folder, color=(0, 0, 255)):
+        """Reads the dict returns from orthophoto2images and geodetic2images
+        and draw a circle around the point in the images and saves them in
+        the given folder"""
         for image_name, point in image_and_points.items():
             image_file_in = self.recon_model.project + '/images/' + image_name
             image_file_out = folder + '/' + image_name
@@ -353,20 +404,24 @@ class OdmConverter:
             cv2.imwrite(image_file_out, image)
 
     def geodetic2images(self, lat, lon):
+        """Given geodetic coordinates it finds the images where the point
+        is visible together with the image coordinates. Returned as a dict
+        with image names as key and coordinates as values"""
         geo_point = self.geodetic2utm(lat, lon, self.recon_model.geo_model)
         image_and_points = self.geo2images(geo_point)
         return image_and_points
 
-    def set_image(self, image_name):
-        self.recon_model.set_image(image_name)
-
     def image_point2geodetic(self, u, v):
+        """Given at image point (u, v) it finds the corresponding geodetic
+        coordinates."""
         utm_point = self.image2utm(u, v)
         geodetic = self.utm2geodetic(utm_point, self.recon_model.geo_model)
         return geodetic
 
     @staticmethod
     def utm2orthophoto(x, y, ortho_size, ortho_corners):
+        """Given a utm point it finds the corresponding orthophoto
+        coordinates"""
         point = np.array([x, y])
         dp = ortho_corners[1] - ortho_corners[0]
         image_point = (point - ortho_corners[0]) * ortho_size / dp
@@ -374,12 +429,17 @@ class OdmConverter:
 
     @staticmethod
     def orthophoto2utm(u, v, ortho_size, ortho_corners):
+        """Given coordinates in the orthophoto finds the corresponding utm
+        coordinates"""
         image_point = np.array([u, v])
         dp = ortho_corners[1] - ortho_corners[0]
         point = image_point * dp / ortho_size + ortho_corners[0]
         return point
 
     def geo2images(self, geo_point):
+        """Given a utm coordinates finds the image where the point is visible
+        together with the image coordinates. Return it as a dict with image
+        name as key and coordinates as values."""
         image_and_points = {}
         geo_3d_point = self.utm2geo3d(geo_point, self.recon_model.model_3d)
         point3d = self.geo3d2point(geo_3d_point, self.recon_model.geo_transform)
@@ -390,6 +450,7 @@ class OdmConverter:
         return image_and_points
 
     def geodetic2utm(self, lat, lon, geo_model):
+        """Convert geodetic coordinates to utm"""
         hemisphere, zone, e_offset, n_offset = geo_model
         hemisphere2, zone2, _, east, north = self.utm.geodetic_to_utm(lat, lon)
         if hemisphere == hemisphere2 and zone == zone2:
@@ -400,6 +461,7 @@ class OdmConverter:
                            'geo model from OpenDroneMap')
 
     def image2utm(self, u, v):
+        """Convert a image point (u, v) to utm coordinates"""
         self.check_input_coord(u, v, self.recon_model.image_shape)
         depth = self.recon_model.get_depth(u, v)
         point3d = self.image2world(u, v, depth, self.recon_model.recon)
@@ -408,6 +470,7 @@ class OdmConverter:
 
     @staticmethod
     def utm2geo3d(geo_p, model_3d):
+        """Convert utm to georeferenced 3d model point"""
         dist_keep = 100000
         point_keep = 0
         geo_point = np.array(geo_p)
@@ -420,6 +483,8 @@ class OdmConverter:
 
     @staticmethod
     def geo3d2point(geo_p, geo_transform):
+        """Converts georeferenced 3d model point to non georeferenced 3d model
+        point"""
         geo_p_4d = np.array([geo_p[0], geo_p[1], geo_p[2], 1])
         p_4d = np.dot(np.linalg.inv(geo_transform), geo_p_4d)
         p = p_4d[0:3]
@@ -427,12 +492,14 @@ class OdmConverter:
 
     @staticmethod
     def world2image(p, recon):
+        """Converts 3d model point to image coordinates"""
         im_3d_point = np.dot(recon.k, recon.q.rotate(p - recon.origin))
         u, v = (im_3d_point[:2] / im_3d_point[2]).astype(int)
         return u, v
 
     @staticmethod
     def check_output_coord(coordinate, image_shape):
+        """Checks if the given output image coordinates are within the image"""
         if 0 < coordinate[0] < image_shape[0]:
             if 0 < coordinate[1] < image_shape[1]:
                 return True
@@ -440,6 +507,7 @@ class OdmConverter:
 
     @staticmethod
     def check_input_coord(u, v, image_shape):
+        """Raises a error if the input coordinates are outside the image"""
         if image_shape[0] < u:
             raise ValueError('x of %i is outside the image' % u)
         elif u < 0:
@@ -451,6 +519,7 @@ class OdmConverter:
 
     @staticmethod
     def image2world(u, v, depth, recon):
+        """Converts the image coordinates to 3d model point"""
         im_point = np.array([[u], [v], [1]])
         k_inv = np.linalg.inv(recon.k)
         qt = recon.q.inverse
@@ -459,12 +528,15 @@ class OdmConverter:
 
     @staticmethod
     def point2utm(p, geo_transform):
+        """Convert a non georeferenced 3d model point to a georeferenced 3d
+        model point"""
         p_4d = np.array([p[0], p[1], p[2], 1])
         geo_p_4d = np.dot(geo_transform, p_4d)
         geo_p = geo_p_4d[0:3]
         return geo_p
 
     def utm2geodetic(self, p, geo_model):
+        """Converts a utm point to a geodetic point"""
         hemisphere, zone, e_offset, n_offset = geo_model
         east = p[0] + e_offset
         north = p[1] + n_offset
