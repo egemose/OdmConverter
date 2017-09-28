@@ -195,7 +195,7 @@ class Reconstruction:
             for line in f:
                 match = re.search(matcher, line)
                 if match:
-                    yield match
+                    yield match.groups()
 
     def get_ortho_size(self):
         """read the size of of the ODM orthophoto"""
@@ -209,10 +209,9 @@ class Reconstruction:
         regex_num = '(-?\d+\.\d+e\+\d+)'
         regex = (regex_num + ' ') * 3 + regex_num
         for match in self.parse_file(self.project.ortho_corners, regex):
-            p1 = np.array([float(match.group(1)),
-                           float(match.group(4))])
-            p2 = np.array([float(match.group(3)),
-                           float(match.group(2))])
+            float_match = tuple(float(m) for m in match)
+            p1 = np.asarray([float_match[0], float_match[3]])
+            p2 = np.asarray([float_match[2], float_match[1]])
             corners = [p1, p2]
         if corners is None:
             raise FileReadError('Can not parse orthophoto corners.')
@@ -223,9 +222,7 @@ class Reconstruction:
         model_3d = []
         regex = 'v' + (' ' + self.regex_f) * 3
         for match in self.parse_file(self.project.geo_3d_model, regex):
-            point = np.array([float(match.group(1)),
-                              float(match.group(2)),
-                              float(match.group(3))])
+            point = np.asarray(tuple(float(m) for m in match))
             model_3d.append(point)
         if model_3d is None:
             raise FileReadError('Can not parse 3d model.')
@@ -242,7 +239,7 @@ class Reconstruction:
         regex = (self.regex_f + ',\t') * 3 + self.regex_f
         for i, match in enumerate(self.parse_file(
                 self.project.geo_transform, regex)):
-            for j, num in enumerate(match.groups()):
+            for j, num in enumerate(match):
                 geo_transform[i, j] = num
         if not geo_transform.any():
             raise FileReadError('Can not parse geo transformation matrix.')
@@ -250,19 +247,14 @@ class Reconstruction:
 
     def get_geo_model(self):
         """Read the utm model used by ODM"""
-        model_matcher = re.compile('WGS84 UTM (\d+)([NS])')
-        offset_matcher = re.compile('(\d+) (\d+)')
+        matcher = re.compile('WGS84 UTM (\d+)([NS]).(\d+) (\d+)', re.S)
         with open(self.project.geo_model, 'r') as f:
-            model_match = re.search(model_matcher, f.readline())
-            offset_match = re.search(offset_matcher, f.readline())
-        if model_match:
-            hemisphere = model_match.group(2)
-            zone = int(model_match.group(1))
-        else:
-            raise GeoModelError('Can not parse the geo model file.')
-        if offset_match:
-            east_offset = int(offset_match.group(1))
-            north_offset = int(offset_match.group(2))
+            match = re.search(matcher, f.read()).groups()
+        if match:
+            zone = int(match[0])
+            hemisphere = match[1]
+            east_offset = int(match[2])
+            north_offset = int(match[3])
         else:
             raise GeoModelError('Can not parse the geo model file.')
         geo_model = self.geo_model_namedtuple(hemisphere,
@@ -341,14 +333,12 @@ class Reconstruction:
 
     def parse_recon(self, match):
         """parses the reconstruction data into the corresponding variables"""
-        self.image_name = match.group(1)
+        self.image_name = match[0]
+        float_match = tuple(float(m) for m in match[1:])
         self.image_shape = self.get_image_size()
-        k = self.get_k(float(match.group(2)))
-        q = Quaternion(float(match.group(3)), float(match.group(4)),
-                       float(match.group(5)), float(match.group(6)))
-        origin = np.array([float(match.group(7)),
-                           float(match.group(8)),
-                           float(match.group(9))])
+        k = self.get_k(float_match[0])
+        q = Quaternion(float_match[1:5])
+        origin = np.asarray(float_match[5:])
         recon = self.reconstruction_namedtuple(k, q, origin)
         return recon
 
@@ -532,7 +522,7 @@ class OdmConverter:
     def geo3d2point(geo_p, geo_transform):
         """Converts georeferenced 3d model point to non georeferenced 3d model
         point"""
-        geo_p_4d = np.array([geo_p[0], geo_p[1], geo_p[2], 1])
+        geo_p_4d = np.asarray([geo_p[0], geo_p[1], geo_p[2], 1])
         p_4d = np.dot(np.linalg.inv(geo_transform), geo_p_4d)
         p = p_4d[0:3]
         return p
