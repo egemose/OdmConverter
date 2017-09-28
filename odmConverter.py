@@ -471,7 +471,7 @@ class OdmConverter:
     @staticmethod
     def utm2geo3d(geo_p, model_3d):
         """Convert utm to georeferenced 3d model point"""
-        dist_keep = 100000
+        dist_keep = float('Inf')
         point_keep = 0
         geo_point = np.array(geo_p)
         for point in model_3d:
