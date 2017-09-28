@@ -168,6 +168,7 @@ class Reconstruction:
 
     @staticmethod
     def make_project_tuple(folder):
+        """make a named tuple of all the paths used."""
         pt = namedtuple('project', 'folder, orthophoto, ortho_corners, '
                                    'geo_3d_model, all_images, geo_transform, '
                                    'geo_model, images, camera_models, '
@@ -187,6 +188,7 @@ class Reconstruction:
 
     @staticmethod
     def parse_file(file, regex):
+        """Read a file and yield the matches with a regex"""
         matcher = re.compile(regex)
         """parse the different files"""
         with open(file, 'r') as f:
