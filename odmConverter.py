@@ -135,7 +135,7 @@ class Reconstruction:
     """Class to read and hold the reconstruction information from a
     OpenDroneMap project"""
     def __init__(self, project, only_image2geodetic):
-        self.project = project
+        self.project = self.make_project_tuple(project)
         self.regex_f = '(-?\d+\.\d+)'
         self.geo_model_namedtuple = namedtuple('geo_model', ['hemisphere',
                                                              'zone',
@@ -156,19 +156,36 @@ class Reconstruction:
             self.ortho_corners = self.get_ortho_corners()
             self.ortho_size = self.get_ortho_size()
 
+    @staticmethod
+    def make_project_tuple(folder):
+        pt = namedtuple('project', 'folder, orthophoto, ortho_corners, '
+                                   'geo_3d_model, all_images, geo_transform, '
+                                   'geo_model, images, camera_models, '
+                                   'reconstruction, depthmaps')
+        p = pt(folder,
+               folder + '/odm_orthophoto/odm_orthophoto.png',
+               folder + '/odm_orthophoto/odm_orthophoto_corners.txt',
+               folder + '/odm_texturing/odm_textured_model_geo.obj',
+               folder + '/images/*.JPG',
+               folder + '/odm_georeferencing/odm_georeferencing_transform.txt',
+               folder + '/odm_georeferencing/odm_georeferencing_model_geo.txt',
+               folder + '/images/',
+               folder + '/opensfm/camera_models.json',
+               folder + '/opensfm/reconstruction.nvm',
+               folder + '/opensfm/depthmaps/')
+        return p
+
     def get_ortho_size(self):
         """read the size of of the ODM orthophoto"""
-        image_file = self.project + '/odm_orthophoto/odm_orthophoto.png'
         regex = '(\d+) x (\d+)'
-        size = self.get_image_info(image_file, regex)
+        size = self.get_image_info(self.project.orthophoto, regex)
         return size
 
     def get_ortho_corners(self):
         """read the utm coordinates for the ODM orthophoto corners"""
-        file = self.project + '/odm_orthophoto/odm_orthophoto_corners.txt'
         regex = '(-?\d+\.\d+e\+\d+)'
         corner_matcher = re.compile((regex + ' ') * 3 + regex)
-        with open(file, 'r') as f:
+        with open(self.project.ortho_corners, 'r') as f:
             for line in f:
                 match = re.search(corner_matcher, line)
                 if match:
@@ -181,10 +198,9 @@ class Reconstruction:
 
     def get_3d_model(self):
         """read the georeferenced 3d model"""
-        model_file = self.project + '/odm_texturing/odm_textured_model_geo.obj'
         model_3d = []
         row_matcher = re.compile('v' + (' ' + self.regex_f) * 3)
-        with open(model_file, 'r') as f:
+        with open(self.project.geo_3d_model, 'r') as f:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
@@ -196,17 +212,14 @@ class Reconstruction:
 
     def list_of_images(self):
         """Get at list of all images used for the ODM project"""
-        image_folder = self.project + '/images/*.JPG'
-        images = glob.glob(image_folder)
+        images = glob.glob(self.project.all_images)
         return images
 
     def get_geo_transform(self):
         """Read the georeferencing transformation matrix"""
-        geo_file = self.project \
-                   + '/odm_georeferencing/odm_georeferencing_transform.txt'
         geo_transform = np.zeros((4, 4))
         row_matcher = re.compile((self.regex_f + ',\t') * 3 + self.regex_f)
-        with open(geo_file, 'r') as f:
+        with open(self.project.geo_transform, 'r') as f:
             for i, line in enumerate(f):
                 match = re.search(row_matcher, line)
                 for j, num in enumerate(match.groups()):
@@ -215,9 +228,7 @@ class Reconstruction:
 
     def get_geo_model(self):
         """Read the utm model used by ODM"""
-        geo_file = self.project \
-                   + '/odm_georeferencing/odm_georeferencing_model_geo.txt'
-        with open(geo_file, 'r') as f:
+        with open(self.project.geo_model, 'r') as f:
             model = f.readline()
             offset = f.readline()
         hemisphere = model[-2]
@@ -234,7 +245,7 @@ class Reconstruction:
     def set_image(self, image_name):
         """Set the current image to be processed and load the
         corresponding reconstruction data"""
-        image_file = self.project + '/images/' + image_name
+        image_file = self.project.images + image_name
         if image_file in self.image_list:
             self.image_name = image_name
             self.recon = self.get_reconstruction()
@@ -247,8 +258,7 @@ class Reconstruction:
         """Get the size of the images used in the reconstruction. May be
         different from the input image size if ODM have resized the images"""
         shape = None
-        file = self.project + '/opensfm/camera_models.json'
-        with open(file, 'r') as f:
+        with open(self.project.camera_models, 'r') as f:
             camera_model = json.load(f)
             for cam in camera_model:
                 cam_data = camera_model.get(cam)
@@ -260,7 +270,7 @@ class Reconstruction:
 
     def get_image_size(self):
         """Get the size of the input images"""
-        image_file = self.project + '/images/' + self.image_name
+        image_file = self.project.images + self.image_name
         regex = '(\d+)x(\d+)'
         size = self.get_image_info(image_file, regex)
         return size
@@ -295,9 +305,8 @@ class Reconstruction:
             re_string = 'undistorted/(.*)'
         else:
             re_string = '(' + image_name + ')'
-        reconstruction_file = self.project + '/opensfm/reconstruction.nvm'
         row_matcher = re.compile(re_string + (' ' + self.regex_f) * 8)
-        with open(reconstruction_file, 'r') as f:
+        with open(self.project.reconstruction, 'r') as f:
             for line in f:
                 match = re.search(row_matcher, line)
                 if match:
@@ -318,7 +327,7 @@ class Reconstruction:
         return recon
 
     def get_k(self, focal):
-        """Computes the k matrix give the focal length"""
+        """Computes the k matrix give the focal length * model_image_shape"""
         d = np.append(focal * self.image_shape / self.model_image_shape, [1])
         k = np.diag(d)
         k[:2, 2] = self.image_shape / 2
@@ -326,8 +335,7 @@ class Reconstruction:
 
     def get_depth_map(self):
         """Reads the depth map"""
-        depth_map_file = self.project + '/opensfm/depthmaps/' \
-                         + self.image_name + '.clean.npz'
+        depth_map_file = self.project.depthmaps + self.image_name + '.clean.npz'
         try:
             depth_map = np.load(depth_map_file)['depth']
         except FileNotFoundError:
@@ -398,7 +406,7 @@ class OdmConverter:
         and draw a circle around the point in the images and saves them in
         the given folder"""
         for image_name, point in image_and_points.items():
-            image_file_in = self.recon_model.project + '/images/' + image_name
+            image_file_in = self.recon_model.project.images + image_name
             image_file_out = folder + '/' + image_name
             image = cv2.imread(image_file_in)
             image = cv2.circle(image, point, 100, color, 10)
