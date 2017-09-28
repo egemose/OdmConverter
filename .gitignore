@@ -7,5 +7,4 @@ __pycache__/
 *#*
 *~
 .idea/
-testGps/
-testOrtho/
+_*

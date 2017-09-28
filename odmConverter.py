@@ -274,7 +274,6 @@ class Reconstruction:
         if match:
             size = np.array([int(match.group(1)), int(match.group(2))])
         else:
-            print('could not get the image size')
             raise ImageSizeError('could not get the image size of image: '
                                  '(%s)' % image_file)
         return size
@@ -332,7 +331,8 @@ class Reconstruction:
         try:
             depth_map = np.load(depth_map_file)['depth']
         except FileNotFoundError:
-            print('Image is not part of the reconstruction')
+            print('Image (%s) is not part of the reconstruction.'
+                  % self.image_name)
             raise
         return depth_map
 
@@ -345,9 +345,10 @@ class Reconstruction:
         depth = self.depth_map[y_new, x_new]
         if depth == 0:
             depth = self.find_nearest_nonzero(self.depth_map, x_new, y_new)
-            print('Warning: pixel (%i, %i) not part of depth model. '
-                  'Nearest pixel in depth model is used, which may give some '
-                  'offset in the position.' % (u, v))
+            print('Warning: pixel (%i, %i) of image (%s) is not part of depth '
+                  'map. \n'
+                  'Nearest pixel in depth map is used, which may give some '
+                  'offset in the position.' % (u, v, self.image_name))
         return depth
 
     @staticmethod
@@ -458,7 +459,8 @@ class OdmConverter:
             return geo_point
         else:
             raise MapError('Conversion from geodetic to utm do not match the '
-                           'geo model from OpenDroneMap')
+                           'geo model from OpenDroneMap. Check the geodetic '
+                           'coordinates.')
 
     def image2utm(self, u, v):
         """Convert a image point (u, v) to utm coordinates"""
