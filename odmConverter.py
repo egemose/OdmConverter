@@ -116,6 +116,11 @@ class NoCameraModelError(Exception):
     pass
 
 
+class FileReadError(Exception):
+    """Error with reading a file"""
+    pass
+
+
 class ImageSizeError(Exception):
     """Error with getting the image size"""
     pass
@@ -128,6 +133,11 @@ class NoImageError(Exception):
 
 class MapError(Exception):
     """Error with the utm conversion"""
+    pass
+
+
+class GeoModelError(Exception):
+    """Error with parsing the geo model file"""
     pass
 
 
@@ -175,6 +185,16 @@ class Reconstruction:
                folder + '/opensfm/depthmaps/')
         return p
 
+    @staticmethod
+    def parse_file(file, regex):
+        matcher = re.compile(regex)
+        """parse the different files"""
+        with open(file, 'r') as f:
+            for line in f:
+                match = re.search(matcher, line)
+                if match:
+                    yield match
+
     def get_ortho_size(self):
         """read the size of of the ODM orthophoto"""
         regex = '(\d+) x (\d+)'
@@ -183,31 +203,30 @@ class Reconstruction:
 
     def get_ortho_corners(self):
         """read the utm coordinates for the ODM orthophoto corners"""
-        regex = '(-?\d+\.\d+e\+\d+)'
-        corner_matcher = re.compile((regex + ' ') * 3 + regex)
-        with open(self.project.ortho_corners, 'r') as f:
-            for line in f:
-                match = re.search(corner_matcher, line)
-                if match:
-                    p1 = np.array([float(match.group(1)),
-                                   float(match.group(4))])
-                    p2 = np.array([float(match.group(3)),
-                                   float(match.group(2))])
-                    corners = [p1, p2]
-                    return corners
+        corners = None
+        regex_num = '(-?\d+\.\d+e\+\d+)'
+        regex = (regex_num + ' ') * 3 + regex_num
+        for match in self.parse_file(self.project.ortho_corners, regex):
+            p1 = np.array([float(match.group(1)),
+                           float(match.group(4))])
+            p2 = np.array([float(match.group(3)),
+                           float(match.group(2))])
+            corners = [p1, p2]
+        if corners is None:
+            raise FileReadError('Can not parse orthophoto corners.')
+        return corners
 
     def get_3d_model(self):
         """read the georeferenced 3d model"""
         model_3d = []
-        row_matcher = re.compile('v' + (' ' + self.regex_f) * 3)
-        with open(self.project.geo_3d_model, 'r') as f:
-            for line in f:
-                match = re.search(row_matcher, line)
-                if match:
-                    point = np.array([float(match.group(1)),
-                                      float(match.group(2)),
-                                      float(match.group(3))])
-                    model_3d.append(point)
+        regex = 'v' + (' ' + self.regex_f) * 3
+        for match in self.parse_file(self.project.geo_3d_model, regex):
+            point = np.array([float(match.group(1)),
+                              float(match.group(2)),
+                              float(match.group(3))])
+            model_3d.append(point)
+        if model_3d is None:
+            raise FileReadError('Can not parse 3d model.')
         return model_3d
 
     def list_of_images(self):
@@ -218,24 +237,32 @@ class Reconstruction:
     def get_geo_transform(self):
         """Read the georeferencing transformation matrix"""
         geo_transform = np.zeros((4, 4))
-        row_matcher = re.compile((self.regex_f + ',\t') * 3 + self.regex_f)
-        with open(self.project.geo_transform, 'r') as f:
-            for i, line in enumerate(f):
-                match = re.search(row_matcher, line)
-                for j, num in enumerate(match.groups()):
-                    geo_transform[i, j] = num
+        regex = (self.regex_f + ',\t') * 3 + self.regex_f
+        for i, match in enumerate(self.parse_file(
+                self.project.geo_transform, regex)):
+            for j, num in enumerate(match.groups()):
+                geo_transform[i, j] = num
+        if not geo_transform.any():
+            raise FileReadError('Can not parse geo transformation matrix.')
         return geo_transform
 
     def get_geo_model(self):
         """Read the utm model used by ODM"""
+        model_matcher = re.compile('WGS84 UTM (\d+)([NS])')
+        offset_matcher = re.compile('(\d+) (\d+)')
         with open(self.project.geo_model, 'r') as f:
-            model = f.readline()
-            offset = f.readline()
-        hemisphere = model[-2]
-        zone = int(model[-4:-2])
-        east_offset_str, north_offset_str = offset.split(' ')
-        east_offset = int(east_offset_str)
-        north_offset = int(north_offset_str)
+            model_match = re.search(model_matcher, f.readline())
+            offset_match = re.search(offset_matcher, f.readline())
+        if model_match:
+            hemisphere = model_match.group(2)
+            zone = int(model_match.group(1))
+        else:
+            raise GeoModelError('Can not parse the geo model file.')
+        if offset_match:
+            east_offset = int(offset_match.group(1))
+            north_offset = int(offset_match.group(2))
+        else:
+            raise GeoModelError('Can not parse the geo model file.')
         geo_model = self.geo_model_namedtuple(hemisphere,
                                               zone,
                                               east_offset,
@@ -305,13 +332,10 @@ class Reconstruction:
             re_string = 'undistorted/(.*)'
         else:
             re_string = '(' + image_name + ')'
-        row_matcher = re.compile(re_string + (' ' + self.regex_f) * 8)
-        with open(self.project.reconstruction, 'r') as f:
-            for line in f:
-                match = re.search(row_matcher, line)
-                if match:
-                    recon = self.parse_recon(match)
-                    yield recon
+        regex = re_string + (' ' + self.regex_f) * 8
+        for match in self.parse_file(self.project.reconstruction, regex):
+            recon = self.parse_recon(match)
+            yield recon
 
     def parse_recon(self, match):
         """parses the reconstruction data into the corresponding variables"""
@@ -395,6 +419,12 @@ class OdmConverter:
         finds the images where the point is visible together with the image
         coordinates. Returned as a dict with image names as key and
         coordinates as values"""
+        if not self.check_output_coord(u, v, self.recon_model.ortho_size):
+            raise ValueError('coordinates (%i, %i) is outside image (%s) with '
+                             'size (%i, %i)' %
+                             (u, v, self.recon_model.image_name,
+                              self.recon_model.ortho_size[0],
+                              self.recon_model.ortho_size[1]))
         geo_point = self.orthophoto2utm(u, v,
                                         self.recon_model.ortho_size,
                                         self.recon_model.ortho_corners)
@@ -454,7 +484,7 @@ class OdmConverter:
         point3d = self.geo3d2point(geo_3d_point, self.recon_model.geo_transform)
         for recon in self.recon_model.images_from_recon():
             im_coord = self.world2image(point3d, recon)
-            if self.check_output_coord(im_coord, self.recon_model.image_shape):
+            if self.check_output_coord(*im_coord, self.recon_model.image_shape):
                 image_and_points.update({self.recon_model.image_name: im_coord})
         return image_and_points
 
@@ -472,7 +502,12 @@ class OdmConverter:
 
     def image2utm(self, u, v):
         """Convert a image point (u, v) to utm coordinates"""
-        self.check_input_coord(u, v, self.recon_model.image_shape)
+        if not self.check_output_coord(u, v, self.recon_model.image_shape):
+            raise ValueError('coordinates (%i, %i) is outside image (%s) with '
+                             'size (%i, %i)' %
+                             (u, v, self.recon_model.image_name,
+                              self.recon_model.image_shape[0],
+                              self.recon_model.image_shape[1]))
         depth = self.recon_model.get_depth(u, v)
         point3d = self.image2world(u, v, depth, self.recon_model.recon)
         utm_point = self.point2utm(point3d, self.recon_model.geo_transform)
@@ -508,24 +543,12 @@ class OdmConverter:
         return u, v
 
     @staticmethod
-    def check_output_coord(coordinate, image_shape):
+    def check_output_coord(u, v, image_shape):
         """Checks if the given output image coordinates are within the image"""
-        if 0 < coordinate[0] < image_shape[0]:
-            if 0 < coordinate[1] < image_shape[1]:
+        if 0 < u < image_shape[0]:
+            if 0 < v < image_shape[1]:
                 return True
         return False
-
-    @staticmethod
-    def check_input_coord(u, v, image_shape):
-        """Raises a error if the input coordinates are outside the image"""
-        if image_shape[0] < u:
-            raise ValueError('x of %i is outside the image' % u)
-        elif u < 0:
-            raise ValueError('x must be positive, not %i' % u)
-        if image_shape[1] < v:
-            raise ValueError('y of %i is outside the image' % v)
-        elif v < 0:
-            raise ValueError('y must be positive, not %i' % v)
 
     @staticmethod
     def image2world(u, v, depth, recon):
