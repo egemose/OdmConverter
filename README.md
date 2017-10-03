@@ -16,7 +16,7 @@ pyquaternion (pip install pyquaternion)
 ### Installation
 
 * open a terminal in the folder where OdmConverter shall be.
-* Clone the repository:  `git clone https://github.com/OpenDroneMap/OpenDroneMap.git`
+* Clone the repository:  `git clone git@github.com:egemose/OdmConverter.git`
 
 ### Usage
 
