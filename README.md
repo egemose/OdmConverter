@@ -1,4 +1,4 @@
-# OdmConverter
+# OdmConverter [![DOI](https://zenodo.org/badge/105533103.svg)](https://zenodo.org/badge/latestdoi/105533103)
 
 OdmConverter uses [OpenDroneMap](https://github.com/OpenDroneMap/OpenDroneMap) generated files to convert between geodetic coordinates and image coordinates and between image and orthophoto coordinates.
 
